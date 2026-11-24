@@ -90,7 +90,7 @@ def send_confirmation(email: str, name: str):
     except Exception as e:  # noqa
         app.logger.error("mail failed: %s", e)
         sent = False
-    if not sent and os.getenv("RENDER") is None:
+    if not sent and (os.getenv("RENDER") is None or os.getenv("DEMO_SHOW_LINK") == "1"):
         flash(f"DEV MODE (no mail provider configured). Confirm link: {link}", "info")
     return sent
 
@@ -120,7 +120,7 @@ def signup():
             sent = send_confirmation(email, name)
             return render_template("message.html", title="Check your inbox", email=email,
                                    body="We sent a confirmation link. Click it to activate your account."
-                                   if sent else "We couldn't send the email (mail service not configured or sender not verified). Contact the admin, or use Resend later.")
+                                   if sent else "Email delivery isn't configured on this server. Use the confirmation link shown above (demo mode).")
     return render_template("signup.html")
 
 
