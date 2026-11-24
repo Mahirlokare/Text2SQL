@@ -120,7 +120,7 @@ def signup():
             sent = send_confirmation(email, name)
             return render_template("message.html", title="Check your inbox", email=email,
                                    body="We sent a confirmation link. Click it to activate your account."
-                                   if sent else "Confirmation link generated (see notice above).")
+                                   if sent else "We couldn't send the email (mail service not configured or sender not verified). Contact the admin, or use Resend later.")
     return render_template("signup.html")
 
 
