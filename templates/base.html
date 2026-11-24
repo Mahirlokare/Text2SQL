@@ -1,0 +1,6 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QueryPilot AI</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head><body>
+<div class="nav"><div class="logo">Query<span>Pilot</span> AI</div>
+<div>{% if session.uid %}Hi, {{ session.name }} &nbsp; <a href="{{ url_for('logout') }}">Sign out</a>{% endif %}</div></div>
+{% block body %}{% endblock %}</body></html>

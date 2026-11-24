@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block body %}
+<div class="auth"><div class="card"><h1>Welcome back</h1><p class="sub">Sign in to ask your data anything.</p>
+{% include "_flashes.html" %}
+<form method="post"><label>Email</label><input type="email" name="email" required autofocus>
+<label>Password</label><input type="password" name="password" required>
+<button class="full">Sign in</button></form></div>
+<div class="foot">New here? <a href="{{ url_for('signup') }}">Create an account</a> · <a href="{{ url_for('resend') }}">Resend confirmation</a></div></div>
+{% endblock %}

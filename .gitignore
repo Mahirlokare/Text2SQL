@@ -1,0 +1,6 @@
+.env
+__pycache__/
+*.pyc
+data/users.db
+data/eval_results.json
+.venv/

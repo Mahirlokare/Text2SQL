@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block body %}
+<div class="wrap">{% include "_flashes.html" %}
+<div class="card"><h2>Ask your data</h2><p class="sub">Plain English in, safe SQL and results out. Demo database: e-commerce.</p>
+<form method="post" class="row"><input name="question" id="q" placeholder="e.g. Top 5 customers by total spend" required maxlength="500" autofocus>
+<button>Ask</button></form>
+<div class="chips">{% for e in ["Top 5 customers by total spend","Monthly revenue in 2024","Which category sells the most units?","Cancelled orders per city"] %}
+<button type="button" class="chip" onclick="q.value=this.textContent;q.focus()">{{ e }}</button>{% endfor %}</div></div>
+
+{% if result %}<div class="card"><b>{{ result.q }}</b>
+<pre>{{ result.sql }}</pre>
+{% if result.err %}<div class="flash error">{{ result.err }}</div>
+{% else %}<div class="meta">{{ result.total }} rows · {{ result.latency }}s · {{ result.attempts }} attempt(s)
+· <a href="{{ url_for('export') }}">Download CSV</a></div>
+<div class="scroll"><table><tr>{% for c in result.cols %}<th>{{ c }}</th>{% endfor %}</tr>
+{% for row in result.rows %}<tr>{% for v in row %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}</table></div>{% endif %}</div>{% endif %}
+
+<div class="card"><h2>Recent queries</h2>
+{% if hist %}<ul class="hist">{% for h in hist %}<li>{{ '✅' if h.ok else '❌' }} {{ h.question }} <span class="meta">· {{ h.created_at }}</span></li>{% endfor %}</ul>
+{% else %}<p class="sub">Nothing yet.</p>{% endif %}</div>
+<details class="card"><summary>Database schema</summary><pre>{{ schema }}</pre></details>
+</div>{% endblock %}
