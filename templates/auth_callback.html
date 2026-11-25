@@ -1,50 +1,41 @@
 {% extends "base.html" %}{% block body %}
 <div class="auth"><div class="card" style="text-align:center">
-  <h1 id="title">Confirming your email…</h1>
-  <p class="sub" id="msg">Please wait while we verify your Supabase confirmation link.</p>
-  <a class="btn alt" id="back" href="{{ url_for('login') }}" style="display:none">Go to sign in</a>
+  <h1 id="title">Completing sign-in…</h1>
+  <p class="sub" id="msg">Verifying your Clerk session…</p>
+  <a class="btn alt" id="back" href="{{ url_for('login') }}" style="display:none">Back to sign in</a>
 </div></div>
 <script>
-(function () {
-  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  const err = hash.get("error_description") || hash.get("error");
-  const token = hash.get("access_token");
+window.addEventListener("load", async function () {
   const title = document.getElementById("title");
   const msg = document.getElementById("msg");
   const back = document.getElementById("back");
-
-  if (err) {
-    title.textContent = "Confirmation link error";
-    msg.textContent = err.replace(/\+/g, " ");
-    back.style.display = "inline-block";
-    return;
-  }
-  if (!token) {
-    title.textContent = "Email confirmed!";
-    msg.textContent = "Your account is active. You can sign in now.";
-    back.style.display = "inline-block";
-    return;
-  }
-  fetch("{{ url_for('auth_session') }}", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ access_token: token })
-  })
-    .then(r => r.json())
-    .then(d => {
-      if (d.ok && d.redirect) {
-        window.location.replace(d.redirect);
-      } else {
-        title.textContent = "Email confirmed!";
-        msg.textContent = d.error || "You can sign in now.";
-        back.style.display = "inline-block";
-      }
-    })
-    .catch(() => {
-      title.textContent = "Email confirmed!";
-      msg.textContent = "You can sign in with your email and password now.";
-      back.style.display = "inline-block";
+  try {
+    if (!window.Clerk) throw new Error("Clerk SDK unavailable.");
+    await window.Clerk.load();
+    if (!window.Clerk.session) {
+      window.location.replace("{{ url_for('login') }}");
+      return;
+    }
+    const token = await window.Clerk.session.getToken();
+    const u = window.Clerk.user;
+    const email = u && u.primaryEmailAddress ? u.primaryEmailAddress.emailAddress : "";
+    const name = u ? (u.fullName || u.firstName || "") : "";
+    const r = await fetch("{{ url_for('auth_session') }}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, email, name })
     });
-})();
+    const d = await r.json();
+    if (d.ok && d.redirect) {
+      window.location.replace(d.redirect);
+    } else {
+      throw new Error(d.error || "Could not verify session.");
+    }
+  } catch (e) {
+    title.textContent = "Sign-in verification error";
+    msg.textContent = e.message || String(e);
+    back.style.display = "inline-block";
+  }
+});
 </script>
 {% endblock %}

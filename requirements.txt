@@ -6,3 +6,4 @@ sqlglot>=25.0
 pytest>=8.0
 flask>=3.0
 gunicorn>=22.0
+cryptography>=42.0

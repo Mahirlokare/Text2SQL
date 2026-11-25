@@ -1,6 +1,0 @@
-{% extends "base.html" %}{% block body %}
-<div class="auth"><div class="card" style="text-align:center"><h1>{{ title }}</h1>
-{% include "_flashes.html" %}
-<p class="sub">{{ body }}</p><p><b>{{ email }}</b></p>
-<a class="btn alt" href="{{ url_for('login') }}">Go to sign in</a></div></div>
-{% endblock %}

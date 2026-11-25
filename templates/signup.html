@@ -1,10 +1,26 @@
 {% extends "base.html" %}{% block body %}
-<div class="auth"><div class="card"><h1>Create account</h1><p class="sub">Supabase will email you a confirmation link.</p>
-{% if sb_ready is defined and not sb_ready %}<div class="flash info">Setup needed: add <b>SUPABASE_URL</b> and <b>SUPABASE_ANON_KEY</b> to your environment variables.</div>{% endif %}
-{% include "_flashes.html" %}
-<form method="post"><label>Name</label><input name="name" required autofocus>
-<label>Email</label><input type="email" name="email" required>
-<label>Password (min 8 characters)</label><input type="password" name="password" minlength="8" required>
-<button class="full">Sign up</button></form></div>
-<div class="foot">Already registered? <a href="{{ url_for('login') }}">Sign in</a></div></div>
+<div class="auth clerk-wrap">
+  {% include "_flashes.html" %}
+  <div id="clerk-sign-up"><div class="card" style="text-align:center"><p class="sub">Loading sign-up…</p></div></div>
+</div>
+<script>
+window.addEventListener("load", async function () {
+  const box = document.getElementById("clerk-sign-up");
+  if (!window.Clerk) {
+    box.innerHTML = '<div class="card"><div class="flash error">Clerk SDK failed to load. Check CLERK_PUBLISHABLE_KEY.</div></div>';
+    return;
+  }
+  await window.Clerk.load();
+  if (window.Clerk.session) {
+    window.location.replace("{{ url_for('auth_callback') }}");
+    return;
+  }
+  box.innerHTML = "";
+  window.Clerk.mountSignUp(box, {
+    signInUrl: "{{ url_for('login') }}",
+    fallbackRedirectUrl: "{{ url_for('auth_callback') }}",
+    appearance: { variables: { colorPrimary: "#4f46e5", borderRadius: "10px" } }
+  });
+});
+</script>
 {% endblock %}

@@ -1,9 +1,35 @@
 {% extends "base.html" %}{% block body %}
-<div class="auth"><div class="card"><h1>Welcome back</h1><p class="sub">Sign in with Supabase to ask your data anything.</p>
-{% if sb_ready is defined and not sb_ready %}<div class="flash info">Setup needed: add <b>SUPABASE_URL</b> and <b>SUPABASE_ANON_KEY</b> to your environment variables.</div>{% endif %}
-{% include "_flashes.html" %}
-<form method="post"><label>Email</label><input type="email" name="email" required autofocus>
-<label>Password</label><input type="password" name="password" required>
-<button class="full">Sign in</button></form></div>
-<div class="foot">New here? <a href="{{ url_for('signup') }}">Create an account</a> · <a href="{{ url_for('resend') }}">Resend confirmation</a></div></div>
+<div class="auth clerk-wrap">
+  {% include "_flashes.html" %}
+  <div id="clerk-sign-in"><div class="card" style="text-align:center"><p class="sub">Loading sign-in…</p></div></div>
+</div>
+<script>
+window.addEventListener("load", async function () {
+  const box = document.getElementById("clerk-sign-in");
+  if (!window.Clerk) {
+    box.innerHTML = '<div class="card"><div class="flash error">Clerk SDK failed to load. Check CLERK_PUBLISHABLE_KEY.</div></div>';
+    return;
+  }
+  await window.Clerk.load();
+  if (window.Clerk.session) {
+    const token = await window.Clerk.session.getToken();
+    const u = window.Clerk.user;
+    const email = u && u.primaryEmailAddress ? u.primaryEmailAddress.emailAddress : "";
+    const name = u ? (u.fullName || u.firstName || "") : "";
+    const r = await fetch("{{ url_for('auth_session') }}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, email, name })
+    });
+    const d = await r.json();
+    if (d.ok && d.redirect) { window.location.replace(d.redirect); return; }
+  }
+  box.innerHTML = "";
+  window.Clerk.mountSignIn(box, {
+    signUpUrl: "{{ url_for('signup') }}",
+    fallbackRedirectUrl: "{{ url_for('auth_callback') }}",
+    appearance: { variables: { colorPrimary: "#4f46e5", borderRadius: "10px" } }
+  });
+});
+</script>
 {% endblock %}
