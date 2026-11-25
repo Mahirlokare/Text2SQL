@@ -90,6 +90,26 @@ class SemanticSQLCompiler:
         if "out of stock" in q or ("zero stock" in q) or ("stock" in q and ("0" in q or "empty" in q)):
             return "SELECT id, name, price, stock FROM products WHERE stock = 0 ORDER BY name"
 
+        if "percentage" in q or "percent" in q or "rate" in q:
+            for st in STATUSES:
+                if st in q:
+                    canon_st = "cancelled" if st == "canceled" else st
+                    return (
+                        f"SELECT ROUND(100.0 * SUM(CASE WHEN status = '{canon_st}' THEN 1 ELSE 0 END) / COUNT(*), 2) "
+                        f"AS {canon_st}_percentage, COUNT(*) AS total_orders FROM orders"
+                    )
+            return (
+                "SELECT status, COUNT(*) AS order_count, "
+                "ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM orders), 2) AS percentage "
+                "FROM orders GROUP BY status ORDER BY percentage DESC"
+            )
+
+        if ("average" in q or "avg" in q) and ("item" in q or "unit" in q or "quantity" in q) and "order" in q:
+            return (
+                "SELECT ROUND(AVG(items_in_order), 2) AS avg_items_per_order FROM ("
+                "SELECT order_id, SUM(quantity) AS items_in_order FROM order_items GROUP BY order_id)"
+            )
+
         if "average order value" in q or "aov" in q or ("average" in q and "order" in q and ("value" in q or "total" in q or "amount" in q)):
             if "city" in q or "cities" in q:
                 return (
@@ -204,10 +224,10 @@ class SemanticSQLCompiler:
         elif ("average" in q or "avg" in q) and "price" in q:
             metric = "avg_price"
             needs_products = True
-        elif ("max" in q or "highest" in q or "most expensive") and "price" in q:
+        elif ("max" in q or "highest" in q or "maximum" in q) and "price" in q and ("what is" in q or "max" in q or "maximum" in q):
             metric = "max_price"
             needs_products = True
-        elif ("min" in q or "lowest" in q or "cheapest") and "price" in q and ("what is" in q or "minimum" in q):
+        elif ("min" in q or "lowest" in q or "minimum" in q) and "price" in q and ("what is" in q or "min" in q or "minimum" in q):
             metric = "min_price"
             needs_products = True
         elif any(w in q for w in ("how many", "count", "number of")) or group_dim in ("city", "status", "category"):
