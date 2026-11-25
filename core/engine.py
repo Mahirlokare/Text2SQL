@@ -1,64 +1,62 @@
-"""Pipeline: question -> SQL -> validate -> execute -> (self-correct on error)."""
-import sqlite3
+"""Universal Text-to-SQL Query Agent pipeline (no fixed database — works for any domain & schema)."""
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-import pandas as pd
-
-from .schema import get_schema_text, get_table_names
-from .validator import clean_sql, validate_sql, UnsafeSQLError
+from .validator import DIALECT_MAP, format_and_check_sql
 
 
 @dataclass
 class QueryResult:
     question: str
+    dialect: str = "postgresql"
+    dialect_label: str = "PostgreSQL"
     sql: str = ""
-    df: pd.DataFrame | None = None
+    explanation: str = ""
+    assumed_schema: str = ""
+    syntax_valid: bool = True
     error: str | None = None
-    attempts: int = 0
     latency_s: float = 0.0
-    trace: list[str] = field(default_factory=list)
 
 
 class Text2SQLEngine:
-    def __init__(self, db_path: str, generator, max_retries: int = 2):
-        self.db_path = db_path
+    """Stateless universal query-giving agent — generates, validates & formats SQL for any domain."""
+
+    def __init__(self, generator):
         self.gen = generator
-        self.max_retries = max_retries
         self.history: list[tuple[str, str]] = []
-        with self._connect() as c:
-            self.schema = get_schema_text(c)
-            self.tables = get_table_names(c)
 
-    def _connect(self):
-        # read-only connection = second line of defence behind the validator
-        return sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-
-    def ask(self, question: str, history: list[tuple[str, str]] | None = None) -> QueryResult:
+    def ask(
+        self,
+        question: str,
+        dialect: str = "postgresql",
+        schema_hint: str = "",
+        history: list[tuple[str, str]] | None = None,
+    ) -> QueryResult:
         t0 = time.time()
-        res = QueryResult(question=question)
+        d_key = (dialect or "postgresql").lower()
+        if d_key not in DIALECT_MAP:
+            d_key = "postgresql"
+        _, d_label = DIALECT_MAP[d_key]
+        res = QueryResult(question=question, dialect=d_key, dialect_label=d_label)
+
         active_hist = history if history is not None else self.history
-        sql = clean_sql(self.gen.generate(question, self.schema, active_hist))
-        for attempt in range(self.max_retries + 1):
-            res.attempts = attempt + 1
-            res.sql = sql
-            if sql.upper().startswith("UNANSWERABLE"):
-                res.error = "This question can't be answered from the database schema (customers, orders, order_items, products, categories)."
-                break
-            try:
-                safe = validate_sql(sql, self.tables)
-                with self._connect() as c:
-                    res.df = pd.read_sql_query(safe, c)
-                res.error = None
-                if history is None:
-                    self.history.append((question, sql))
-                break
-            except Exception as e:
-                res.error = str(e)
-                res.trace.append(f"Attempt {attempt + 1} failed: {e}")
-                if isinstance(e, UnsafeSQLError) and ("Data-modifying" in str(e) or "Only SELECT" in str(e)):
-                    break  # never repair a write/DDL statement
-                if attempt < self.max_retries:
-                    sql = clean_sql(self.gen.repair(question, self.schema, sql, str(e)))
+        try:
+            gen_out = self.gen.generate_universal(
+                question=question,
+                dialect=d_key,
+                schema_hint=schema_hint,
+                history=active_hist,
+            )
+            formatted_sql, valid, warn = format_and_check_sql(gen_out.sql, dialect=d_key)
+            res.sql = formatted_sql
+            res.explanation = gen_out.explanation
+            res.assumed_schema = gen_out.assumed_schema
+            res.syntax_valid = valid
+            if not formatted_sql:
+                res.error = warn or "Could not generate SQL for this prompt."
+            elif history is None:
+                self.history.append((question, formatted_sql))
+        except Exception as e:
+            res.error = str(e)
         res.latency_s = round(time.time() - t0, 2)
         return res

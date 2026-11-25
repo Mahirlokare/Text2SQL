@@ -1,30 +1,111 @@
 {% extends "base.html" %}{% block body %}
 <div class="wrap">{% include "_flashes.html" %}
-<div class="card"><h2>Ask your data</h2><p class="sub">Ask any question in plain English (or enter a SELECT query) — validated &amp; executed safely against the e-commerce database.</p>
-<form method="post" class="row"><input name="question" id="q" placeholder="e.g. Average order value by city, or customers who bought Electronics in 2025" required maxlength="500" autofocus>
-<button>Ask</button></form>
-<div class="chips">{% for e in [
-  "Top 5 customers by total spend",
-  "Monthly revenue in 2024",
-  "Average order value by city",
-  "Which category sells the most units?",
-  "Customers from Mumbai who ordered Electronics",
-  "How many customers have never placed an order?",
-  "Top 5 most expensive products",
-  "Order count breakdown by status"
-] %}
-<button type="button" class="chip" onclick="q.value=this.textContent;q.focus()">{{ e }}</button>{% endfor %}</div></div>
+  <div class="card">
+    <h2>Universal Text-to-SQL Agent</h2>
+    <p class="sub">Ask any query for any domain or dataset in the world. Paste an optional schema or let the agent infer clean table &amp; column names automatically.</p>
 
-{% if result %}<div class="card"><b>{{ result.q }}</b>
-<pre>{{ result.sql }}</pre>
-{% if result.err %}<div class="flash error">{{ result.err }}</div>
-{% else %}<div class="meta">{{ result.total }} rows · {{ result.latency }}s · {{ result.attempts }} attempt(s)
-· <a href="{{ url_for('export') }}">Download CSV</a></div>
-<div class="scroll"><table><tr>{% for c in result.cols %}<th>{{ c }}</th>{% endfor %}</tr>
-{% for row in result.rows %}<tr>{% for v in row %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}</table></div>{% endif %}</div>{% endif %}
+    <form method="post">
+      <div class="controls-row">
+        <div class="dialect-box">
+          <label for="dialect">SQL Dialect</label>
+          <select name="dialect" id="dialect">
+            {% for d_key, d_label in dialects %}
+              <option value="{{ d_key }}" {% if d_key == selected_dialect %}selected{% endif %}>{{ d_label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="prompt-box">
+          <label for="q">Natural-Language Prompt</label>
+          <div class="row">
+            <input name="question" id="q" placeholder="e.g. Find the top 5 doctors with the highest patient recovery rate in 2025" required maxlength="2000" autofocus>
+            <button type="submit">Generate SQL</button>
+          </div>
+        </div>
+      </div>
 
-<div class="card"><h2>Recent queries</h2>
-{% if hist %}<ul class="hist">{% for h in hist %}<li>{{ '✅' if h.ok else '❌' }} {{ h.question }} <span class="meta">· {{ h.created_at }}</span></li>{% endfor %}</ul>
-{% else %}<p class="sub">Nothing yet.</p>{% endif %}</div>
-<details class="card"><summary>Database schema</summary><pre>{{ schema }}</pre></details>
-</div>{% endblock %}
+      <details class="schema-details" {% if schema_hint %}open{% endif %}>
+        <summary>Optional: Paste custom table schema / columns (leave blank to auto-infer any domain)</summary>
+        <textarea name="schema_hint" rows="4" placeholder="Optional — e.g.&#10;patients(id, full_name, dob, blood_group)&#10;admissions(id, patient_id, doctor_id, admitted_at, discharged_at, outcome)">{{ schema_hint }}</textarea>
+      </details>
+    </form>
+
+    <div class="chips">
+      {% for e in [
+        "Hospital: Top 5 cardiologists by patient recovery rate in 2025",
+        "Banking: Detect accounts with more than 3 transactions over $10,000 within 24 hours",
+        "Aviation: Routes with the highest average arrival delay over the past 90 days",
+        "SaaS: Monthly recurring revenue (MRR) and churn rate by subscription tier",
+        "University: Students whose GPA is above their department average",
+        "HR Payroll: Top 3 highest-paid employees in each department using window functions",
+        "Social Media: Creators with >10k followers whose engagement rate grew month-over-month",
+        "Schema Design: Create PostgreSQL tables for a ride-sharing app like Uber"
+      ] %}
+        <button type="button" class="chip" onclick="document.getElementById('q').value=this.textContent.replace(/^[A-Za-z ]+:\s*/, '');document.getElementById('q').focus()">{{ e }}</button>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% if result %}
+    <div class="card">
+      <div class="res-head">
+        <div>
+          <span class="badge">{{ result.dialect_label }}</span>
+          {% if result.syntax_valid %}<span class="badge ok">AST Syntax Verified</span>{% endif %}
+          <span class="meta">· {{ result.latency }}s</span>
+        </div>
+        {% if result.sql %}
+          <div class="res-actions">
+            <button type="button" class="btn alt sm" id="copyBtn" onclick="copySQL()">Copy SQL</button>
+            <a class="btn alt sm" href="{{ url_for('download_sql') }}">Download .sql</a>
+          </div>
+        {% endif %}
+      </div>
+
+      <p style="margin:10px 0 8px"><b>{{ result.q }}</b></p>
+
+      {% if result.err %}
+        <div class="flash error">{{ result.err }}</div>
+      {% else %}
+        <pre id="sqlOut">{{ result.sql }}</pre>
+        {% if result.explanation %}
+          <div class="explain-box"><b>How it works:</b> {{ result.explanation }}</div>
+        {% endif %}
+        {% if result.assumed_schema %}
+          <div class="meta" style="margin-top:8px"><b>Tables / Schema used:</b> <code>{{ result.assumed_schema }}</code></div>
+        {% endif %}
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Recent generated queries</h2>
+    {% if hist %}
+      <ul class="hist">
+        {% for h in hist %}
+          <li>
+            <div class="hist-top">
+              <span>{{ '✅' if h.ok else '❌' }} <span class="badge">{{ h.dialect }}</span> <b>{{ h.question }}</b></span>
+              <span class="meta">{{ h.created_at }}</span>
+            </div>
+            {% if h.sql %}<pre class="hist-sql">{{ h.sql }}</pre>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="sub">No queries generated yet — ask anything above!</p>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+function copySQL() {
+  const el = document.getElementById("sqlOut");
+  const btn = document.getElementById("copyBtn");
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(function () {
+    btn.textContent = "Copied!";
+    setTimeout(function () { btn.textContent = "Copy SQL"; }, 1800);
+  });
+}
+</script>
+{% endblock %}

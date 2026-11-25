@@ -1,6 +1,5 @@
 flask>=3.0
 gunicorn>=22.0
-pandas>=2.0
 python-dotenv>=1.0
 sqlglot>=25.0
 pytest>=8.0

@@ -1,30 +1,23 @@
-import pytest
-from core.validator import validate_sql, clean_sql, UnsafeSQLError
-
-T = {"customers", "orders"}
+from core.validator import clean_sql, format_and_check_sql
 
 
-def test_select_ok_adds_limit():
-    assert "LIMIT" in validate_sql("SELECT * FROM customers", T).upper()
+def test_clean_sql_strips_markdown_fences():
+    assert clean_sql("```sql\nSELECT 1\n```") == "SELECT 1"
 
 
-def test_existing_limit_kept():
-    assert validate_sql("SELECT * FROM customers LIMIT 5", T) == "SELECT * FROM customers LIMIT 5"
+def test_transpile_across_dialects():
+    sql, valid, err = format_and_check_sql("SELECT name, salary FROM employees ORDER BY salary DESC LIMIT 5", "tsql")
+    assert valid is True
+    assert err is None
+    assert "TOP 5" in sql.upper() or "FETCH" in sql.upper()
 
 
-@pytest.mark.parametrize("sql", [
-    "DROP TABLE customers", "DELETE FROM customers", "UPDATE customers SET name='x'",
-    "INSERT INTO customers VALUES (1)", "SELECT 1; DROP TABLE customers",
-    "PRAGMA table_info(customers)", "SELECT * FROM secrets",
-])
-def test_blocked(sql):
-    with pytest.raises(UnsafeSQLError):
-        validate_sql(sql, T)
-
-
-def test_cte_allowed():
-    validate_sql("WITH a AS (SELECT * FROM orders) SELECT * FROM a", T)
-
-
-def test_clean_sql_strips_fences():
-    assert clean_sql("```sql\nSELECT 1;\n```") == "SELECT 1"
+def test_allows_any_domain_tables_and_ddl():
+    for raw in [
+        "SELECT p.name, COUNT(a.id) FROM hospital_patients p JOIN admissions a ON a.patient_id = p.id GROUP BY p.id",
+        "SELECT origin, destination, AVG(delay_minutes) FROM flights GROUP BY origin, destination",
+        "CREATE TABLE ride_requests (id SERIAL PRIMARY KEY, rider_id INT, fare DECIMAL(10, 2))",
+    ]:
+        formatted, valid, _ = format_and_check_sql(raw, "postgresql")
+        assert valid is True
+        assert len(formatted) > 10

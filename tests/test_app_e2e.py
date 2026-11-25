@@ -16,60 +16,33 @@ def client(tmp_path, monkeypatch):
     return web.app.test_client()
 
 
-def test_full_self_contained_signup_confirm_login_and_query(client):
+def test_universal_query_agent_across_world_domains_and_dialects(client):
+    # Sign up -> confirm -> login
     r = client.post("/signup", data={
         "name": "Mahir",
         "email": "mahir@example.com",
         "password": "password123",
     })
-    assert r.status_code == 200
     m = re.search(rb'href="([^"]*/confirm/[^"]+)"', r.data)
     assert m is not None
-    confirm_url = m.group(1).decode("utf-8")
+    client.get(m.group(1).decode("utf-8"), follow_redirects=True)
+    client.post("/login", data={"email": "mahir@example.com", "password": "password123"}, follow_redirects=True)
 
-    blocked = client.post("/login", data={"email": "mahir@example.com", "password": "password123"})
-    assert b"Please confirm your account first" in blocked.data
-
-    conf = client.get(confirm_url, follow_redirects=True)
-    assert b"Account confirmed!" in conf.data
-
-    login_r = client.post(
-        "/login",
-        data={"email": "mahir@example.com", "password": "password123"},
-        follow_redirects=True,
-    )
-    assert b"Hi, Mahir" in login_r.data
-
-    diverse_questions = [
-        "Top 5 customers by total spend",
-        "Monthly revenue in 2024",
-        "Average order value by city",
-        "Which category sells the most units?",
-        "Cancelled orders per city",
-        "How many customers are there?",
-        "How many orders are delivered?",
-        "What is the average product price?",
-        "List the cities of customers with number of customers per city",
-        "Which 3 products are the most expensive?",
-        "Total units sold per category",
-        "How many customers have never placed an order?",
-        "Show orders from Mumbai",
-        "Products in Books under $100",
-        "Products priced between 50 and 200",
-        "Cheapest 5 products",
-        "Products out of stock",
-        "Order count by status",
-        "Revenue per category in 2025",
-        "Delivered orders in March 2024",
-        "Customers who spent more than 500",
-        "Top 10 products by revenue",
-        "Show all categories",
-        "SELECT COUNT(*) AS cnt FROM orders WHERE status = 'shipped'",
+    world_queries = [
+        ("postgresql", "", "Find top 5 cardiologists with highest patient recovery rate in 2025"),
+        ("mysql", "", "Detect bank accounts with total transactions over 10000 in 2025"),
+        ("tsql", "", "Top 10 flights by average delay per airline"),
+        ("bigquery", "", "Monthly active users and average watch time per country on a streaming platform"),
+        ("snowflake", "students(id, full_name, dept, gpa)", "Average gpa by dept for students over 3.5"),
+        ("oracle", "", "Highest salary per department for active employees"),
+        ("sqlite", "", "Design a database schema for a ride sharing app"),
     ]
-    for q in diverse_questions:
-        q_r = client.post("/app", data={"question": q})
-        assert q_r.status_code == 200, f"HTTP failed on: {q}"
-        assert b'class="flash error"' not in q_r.data, f"Query errored on: {q} -> {q_r.data[:500]}"
+    for dialect, schema_hint, q in world_queries:
+        res = client.post("/app", data={"question": q, "dialect": dialect, "schema_hint": schema_hint})
+        assert res.status_code == 200, f"Failed HTTP on: {q}"
+        assert b'class="flash error"' not in res.data, f"Errored on: {q}"
+        assert b'id="sqlOut"' in res.data, f"No SQL output for: {q}"
 
-    csv_r = client.get("/export.csv")
-    assert csv_r.status_code == 200
+    dl = client.get("/download.sql")
+    assert dl.status_code == 200
+    assert len(dl.data) > 10

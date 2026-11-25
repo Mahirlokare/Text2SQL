@@ -1,4 +1,4 @@
-"""QueryPilot AI web app: 100% self-contained auth (signup/confirm/login) + text-to-SQL workspace."""
+"""QueryPilot AI web app: self-contained auth + Universal Multi-Dialect Text-to-SQL Query Agent."""
 import os
 import re
 import smtplib
@@ -15,13 +15,13 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from core.engine import Text2SQLEngine
 from core.llm import SQLGenerator
+from core.validator import DIALECT_MAP
 
 load_dotenv()
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.getenv("DATA_DIR", os.path.join(BASE, "data"))
 os.makedirs(DATA, exist_ok=True)
 USERS_DB = os.path.join(DATA, "users.db")
-DEMO_DB = os.path.join(BASE, "data", "shop.db")
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
@@ -37,14 +37,14 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _engine = None
 
 
-def get_engine():
+def get_engine() -> Text2SQLEngine:
     global _engine
     if _engine is None:
-        _engine = Text2SQLEngine(DEMO_DB, SQLGenerator())
+        _engine = Text2SQLEngine(SQLGenerator())
     return _engine
 
 
-# ---------- database ----------
+# ---------- account & history store ----------
 def db():
     if "db" not in g:
         g.db = sqlite3.connect(USERS_DB)
@@ -73,12 +73,17 @@ def init_db():
     CREATE TABLE IF NOT EXISTS history(
       id INTEGER PRIMARY KEY,
       user_id TEXT,
+      dialect TEXT DEFAULT 'postgresql',
       question TEXT,
       sql TEXT,
       ok INTEGER,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    # Ensure dialect column exists if upgrading from older table
+    cols = {r[1] for r in c.execute("PRAGMA table_info(history)").fetchall()}
+    if "dialect" not in cols:
+        c.execute("ALTER TABLE history ADD COLUMN dialect TEXT DEFAULT 'postgresql'")
     c.commit()
     c.close()
 
@@ -96,7 +101,6 @@ def login_required(f):
 
 
 def _try_smtp_email(to_email: str, subject: str, html: str) -> bool:
-    """Optional stdlib SMTP (no paid or third-party SDK). Returns False when not configured."""
     host = (os.getenv("SMTP_HOST") or "").strip()
     sender = (os.getenv("SMTP_USER") or os.getenv("MAIL_FROM") or "").strip()
     password = (os.getenv("SMTP_PASSWORD") or "").strip()
@@ -231,76 +235,73 @@ def logout():
     return redirect(url_for("login"))
 
 
-# ---------- workspace ----------
+# ---------- universal SQL query agent workspace ----------
 @app.route("/app", methods=["GET", "POST"])
 @login_required
 def dashboard():
     result = None
     eng = get_engine()
+    selected_dialect = session.get("dialect", "postgresql")
+    schema_hint = session.get("schema_hint", "")
+
     if request.method == "POST":
-        q = request.form.get("question", "").strip()[:500]
+        q = request.form.get("question", "").strip()[:2000]
+        selected_dialect = request.form.get("dialect", "postgresql").strip().lower()
+        if selected_dialect not in DIALECT_MAP:
+            selected_dialect = "postgresql"
+        schema_hint = request.form.get("schema_hint", "").strip()[:6000]
+        session["dialect"] = selected_dialect
+        session["schema_hint"] = schema_hint
+
         if q:
             user_hist = [tuple(x) for x in session.get("sql_hist", [])]
-            r = eng.ask(q, history=user_hist)
+            r = eng.ask(q, dialect=selected_dialect, schema_hint=schema_hint, history=user_hist)
             result = {
                 "q": q,
+                "dialect": r.dialect,
+                "dialect_label": r.dialect_label,
                 "sql": r.sql,
+                "explanation": r.explanation,
+                "assumed_schema": r.assumed_schema,
+                "syntax_valid": r.syntax_valid,
                 "err": r.error,
-                "attempts": r.attempts,
                 "latency": r.latency_s,
-                "cols": list(r.df.columns) if r.df is not None else [],
-                "rows": r.df.head(200).values.tolist() if r.df is not None else [],
-                "total": len(r.df) if r.df is not None else 0,
             }
-            if not r.error:
+            if not r.error and r.sql:
                 user_hist.append((q, r.sql))
                 session["sql_hist"] = user_hist[-4:]
                 session["last_sql"] = r.sql
             db().execute(
-                "INSERT INTO history(user_id,question,sql,ok) VALUES(?,?,?,?)",
-                (session["uid"], q, r.sql, 0 if r.error else 1),
+                "INSERT INTO history(user_id,dialect,question,sql,ok) VALUES(?,?,?,?,?)",
+                (session["uid"], r.dialect_label, q, r.sql, 0 if r.error else 1),
             )
             db().commit()
-            session["last_q"] = q
+
     hist = db().execute(
-        "SELECT question,sql,ok,created_at FROM history WHERE user_id=? ORDER BY id DESC LIMIT 8",
+        "SELECT dialect,question,sql,ok,created_at FROM history WHERE user_id=? ORDER BY id DESC LIMIT 10",
         (session["uid"],),
     ).fetchall()
+    dialects = [(k, v[1]) for k, v in DIALECT_MAP.items()]
     return render_template(
         "dashboard.html",
         result=result,
         hist=hist,
-        schema=eng.schema,
-        engine_mode=getattr(eng.gen, "mode", "builtin"),
+        dialects=dialects,
+        selected_dialect=selected_dialect,
+        schema_hint=schema_hint,
     )
 
 
-@app.route("/export.csv")
+@app.route("/download.sql")
 @login_required
-def export():
-    from core.validator import validate_sql
-    eng = get_engine()
-    last_sql = session.get("last_sql")
-    if last_sql:
-        safe = validate_sql(last_sql, eng.tables)
-        with eng._connect() as c:
-            import pandas as pd
-            df = pd.read_sql_query(safe, c)
-        return Response(
-            df.to_csv(index=False),
-            mimetype="text/csv",
-            headers={"Content-Disposition": "attachment; filename=result.csv"},
-        )
-    q = session.get("last_q")
-    if not q:
-        return redirect(url_for("dashboard"))
-    r = eng.ask(q)
-    if r.df is None:
+def download_sql():
+    last_sql = session.get("last_sql", "").strip()
+    if not last_sql:
         return redirect(url_for("dashboard"))
     return Response(
-        r.df.to_csv(index=False),
-        mimetype="text/csv",
-        headers={"Content-Disposition": "attachment; filename=result.csv"},
+        last_sql + "\n",
+        mimetype="application/sql",
+        headers={"Content-Disposition": "attachment; filename=query.sql"},
     )
 
 
