@@ -1,9 +1,18 @@
 {% extends "base.html" %}{% block body %}
 <div class="wrap">{% include "_flashes.html" %}
-<div class="card"><h2>Ask your data</h2><p class="sub">Plain English in, safe SQL and results out. Demo database: e-commerce.</p>
-<form method="post" class="row"><input name="question" id="q" placeholder="e.g. Top 5 customers by total spend" required maxlength="500" autofocus>
+<div class="card"><h2>Ask your data</h2><p class="sub">Ask any question in plain English (or enter a SELECT query) — validated &amp; executed safely against the e-commerce database.</p>
+<form method="post" class="row"><input name="question" id="q" placeholder="e.g. Average order value by city, or customers who bought Electronics in 2025" required maxlength="500" autofocus>
 <button>Ask</button></form>
-<div class="chips">{% for e in ["Top 5 customers by total spend","Monthly revenue in 2024","Which category sells the most units?","Cancelled orders per city"] %}
+<div class="chips">{% for e in [
+  "Top 5 customers by total spend",
+  "Monthly revenue in 2024",
+  "Average order value by city",
+  "Which category sells the most units?",
+  "Customers from Mumbai who ordered Electronics",
+  "How many customers have never placed an order?",
+  "Top 5 most expensive products",
+  "Order count breakdown by status"
+] %}
 <button type="button" class="chip" onclick="q.value=this.textContent;q.focus()">{{ e }}</button>{% endfor %}</div></div>
 
 {% if result %}<div class="card"><b>{{ result.q }}</b>

@@ -34,28 +34,30 @@ class Text2SQLEngine:
         # read-only connection = second line of defence behind the validator
         return sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
 
-    def ask(self, question: str) -> QueryResult:
+    def ask(self, question: str, history: list[tuple[str, str]] | None = None) -> QueryResult:
         t0 = time.time()
         res = QueryResult(question=question)
-        sql = clean_sql(self.gen.generate(question, self.schema, self.history))
+        active_hist = history if history is not None else self.history
+        sql = clean_sql(self.gen.generate(question, self.schema, active_hist))
         for attempt in range(self.max_retries + 1):
             res.attempts = attempt + 1
             res.sql = sql
             if sql.upper().startswith("UNANSWERABLE"):
-                res.error = "This question can't be answered from the database schema."
+                res.error = "This question can't be answered from the database schema (customers, orders, order_items, products, categories)."
                 break
             try:
                 safe = validate_sql(sql, self.tables)
                 with self._connect() as c:
                     res.df = pd.read_sql_query(safe, c)
                 res.error = None
-                self.history.append((question, sql))
+                if history is None:
+                    self.history.append((question, sql))
                 break
-            except (UnsafeSQLError, Exception) as e:
+            except Exception as e:
                 res.error = str(e)
                 res.trace.append(f"Attempt {attempt + 1} failed: {e}")
-                if isinstance(e, UnsafeSQLError) and "Data-modifying" in str(e):
-                    break  # never "repair" a malicious query
+                if isinstance(e, UnsafeSQLError) and ("Data-modifying" in str(e) or "Only SELECT" in str(e)):
+                    break  # never repair a write/DDL statement
                 if attempt < self.max_retries:
                     sql = clean_sql(self.gen.repair(question, self.schema, sql, str(e)))
         res.latency_s = round(time.time() - t0, 2)

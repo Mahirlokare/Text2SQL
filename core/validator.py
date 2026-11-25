@@ -1,4 +1,5 @@
 """SQL safety layer: only a single read-only SELECT over known tables is allowed."""
+import re
 import sqlglot
 from sqlglot import exp
 
@@ -10,14 +11,27 @@ class UnsafeSQLError(ValueError):
 FORBIDDEN = (exp.Insert, exp.Update, exp.Delete, exp.Drop, exp.Create,
              exp.Alter, exp.Command, exp.Pragma, exp.Attach, exp.Transaction)
 
+_FENCE_RE = re.compile(r"```(?:sql|sqlite)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+
 
 def clean_sql(raw: str) -> str:
-    s = raw.strip()
-    if s.startswith("```"):
+    s = (raw or "").strip()
+    m = _FENCE_RE.search(s)
+    if m:
+        s = m.group(1).strip()
+    elif s.startswith("```"):
         s = s.strip("`")
         if s.lower().startswith("sql"):
             s = s[3:]
-    return s.strip().rstrip(";").strip()
+    s = re.sub(r"^sql\s*:\s*", "", s.strip(), flags=re.IGNORECASE).strip()
+    if s.upper().startswith("UNANSWERABLE"):
+        return "UNANSWERABLE"
+    # Strip trailing semicolon; if model added leading commentary before SELECT/WITH, trim it
+    if not re.match(r"^(SELECT|WITH|VALUES|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|PRAGMA)\b", s, re.IGNORECASE):
+        m_sel = re.search(r"\b(WITH\s+.+|SELECT\s+.+)", s, re.IGNORECASE | re.DOTALL)
+        if m_sel:
+            s = m_sel.group(1).strip()
+    return s.rstrip(";").strip()
 
 
 def validate_sql(sql: str, allowed_tables: set[str], max_rows: int = 500) -> str:

@@ -240,7 +240,8 @@ def dashboard():
     if request.method == "POST":
         q = request.form.get("question", "").strip()[:500]
         if q:
-            r = eng.ask(q)
+            user_hist = [tuple(x) for x in session.get("sql_hist", [])]
+            r = eng.ask(q, history=user_hist)
             result = {
                 "q": q,
                 "sql": r.sql,
@@ -251,6 +252,10 @@ def dashboard():
                 "rows": r.df.head(200).values.tolist() if r.df is not None else [],
                 "total": len(r.df) if r.df is not None else 0,
             }
+            if not r.error:
+                user_hist.append((q, r.sql))
+                session["sql_hist"] = user_hist[-4:]
+                session["last_sql"] = r.sql
             db().execute(
                 "INSERT INTO history(user_id,question,sql,ok) VALUES(?,?,?,?)",
                 (session["uid"], q, r.sql, 0 if r.error else 1),
@@ -273,7 +278,19 @@ def dashboard():
 @app.route("/export.csv")
 @login_required
 def export():
+    from core.validator import validate_sql
     eng = get_engine()
+    last_sql = session.get("last_sql")
+    if last_sql:
+        safe = validate_sql(last_sql, eng.tables)
+        with eng._connect() as c:
+            import pandas as pd
+            df = pd.read_sql_query(safe, c)
+        return Response(
+            df.to_csv(index=False),
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=result.csv"},
+        )
     q = session.get("last_q")
     if not q:
         return redirect(url_for("dashboard"))
