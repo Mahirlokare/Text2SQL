@@ -1,11 +1,16 @@
 {% extends "base.html" %}{% block body %}
 <div class="auth">
   <div class="card" style="text-align:center">
-    <h1>Confirm your email</h1>
-    <p class="sub">We sent a confirmation email to <b>{{ email or 'your inbox' }}</b>. Please click the verification link inside that email before continuing.</p>
-    {% include "_flashes.html" %}
-    <a class="btn full" href="{{ url_for('auth_login', prompt='login') }}" style="text-align:center;text-decoration:none;color:#fff">I've confirmed my email — Continue</a>
-    <div style="margin-top:14px"><a href="{{ url_for('logout') }}">Use a different account</a></div>
+    {% if sent %}
+      <h1>Check your inbox</h1>
+      <p class="sub">We sent a confirmation email to <b>{{ email }}</b>. Click the link inside to activate your account.</p>
+    {% else %}
+      <h1>Confirm your account</h1>
+      <p class="sub">Hi <b>{{ name }}</b> ({{ email }}) — click below to confirm your email and activate your account:</p>
+      <a class="btn full" href="{{ confirm_link }}" style="text-align:center;text-decoration:none;color:#fff;margin-bottom:14px">Confirm my email &amp; activate account</a>
+      <p class="meta">Built-in confirmation mode (no external mail service required).</p>
+    {% endif %}
+    <div style="margin-top:12px"><a class="btn alt" href="{{ url_for('login') }}">Back to sign in</a></div>
   </div>
 </div>
 {% endblock %}
