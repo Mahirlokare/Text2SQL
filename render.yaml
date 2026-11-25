@@ -9,9 +9,15 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
-      - key: SECRET_KEY
+      - key: AUTH0_SECRET
         generateValue: true
-      - key: CLERK_PUBLISHABLE_KEY
-        value: pk_test_dGhvcm91Z2gtY2hhbW9pcy0xOTgyLmNsZXJrLmFjY291bnRzLmRldiQ
+      - key: AUTH0_DOMAIN
+        sync: false
+      - key: AUTH0_CLIENT_ID
+        sync: false
+      - key: AUTH0_CLIENT_SECRET
+        sync: false
+      - key: AUTH0_REDIRECT_URI
+        value: https://querypilot-ai-g3rf.onrender.com/callback
       - key: GEMINI_API_KEY
         sync: false

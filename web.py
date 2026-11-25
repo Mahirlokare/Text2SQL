@@ -1,13 +1,15 @@
-"""QueryPilot AI web app: Clerk Auth (signup/email confirm/login) + text-to-SQL workspace."""
+"""QueryPilot AI web app: Auth0 (signup/email confirm/login) + text-to-SQL workspace."""
 import os
 import sqlite3
 from functools import wraps
 
+from auth0_server_python.auth_types import LogoutOptions, StartInteractiveLoginOptions
 from dotenv import load_dotenv
-from flask import (Flask, Response, flash, g, jsonify, redirect, render_template,
+from flask import (Flask, Response, flash, g, redirect, render_template,
                    request, session, url_for)
+from werkzeug.middleware.proxy_fix import ProxyFix
 
-from clerk_auth import ClerkAuthError, ClerkVerifier
+from auth import get_auth0_client, get_auth0_secret, is_auth0_configured
 from core.engine import Text2SQLEngine
 from core.llm import SQLGenerator
 
@@ -19,28 +21,15 @@ APP_DB = os.path.join(DATA, "users.db")
 DEMO_DB = os.path.join(BASE, "data", "shop.db")
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "dev-only-change-me")
-app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
-                  SESSION_COOKIE_SECURE=os.getenv("RENDER") is not None)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+app.secret_key = get_auth0_secret()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("RENDER") is not None,
+)
 
 _engine = None
-_clerk = None
-
-
-def get_clerk() -> ClerkVerifier:
-    global _clerk
-    if _clerk is None:
-        _clerk = ClerkVerifier()
-    return _clerk
-
-
-@app.context_processor
-def inject_clerk():
-    try:
-        c = get_clerk()
-        return {"clerk_pk": c.publishable_key, "clerk_fapi": c.frontend_api}
-    except Exception:
-        return {"clerk_pk": "", "clerk_fapi": ""}
 
 
 def get_engine():
@@ -78,101 +67,150 @@ def init_db():
 init_db()
 
 
-def _apply_claims_to_session(claims: dict, fallback_email: str = "", fallback_name: str = ""):
-    uid = str(claims["sub"])
-    email = (claims.get("email") or fallback_email or "").strip()
+async def _current_user() -> dict | None:
+    if not is_auth0_configured():
+        return None
+    client = get_auth0_client(url_for("callback", _external=True))
+    return await client.get_user()
+
+
+def _sync_display_session(user: dict) -> None:
+    email = (user.get("email") or "").strip()
     name = (
-        claims.get("name")
-        or claims.get("first_name")
-        or fallback_name
+        user.get("name")
+        or user.get("nickname")
         or (email.split("@")[0] if email else "User")
     ).strip()
-    session["uid"] = uid
+    session["uid"] = str(user.get("sub"))
     session["email"] = email
     session["name"] = name
 
 
-def _try_cookie_session() -> bool:
-    """If Flask session isn't populated yet, verify Clerk's same-origin __session JWT cookie."""
-    if "uid" in session:
-        return True
-    raw_jwt = request.cookies.get("__session")
-    if not raw_jwt:
-        return False
-    try:
-        claims = get_clerk().verify_session_token(raw_jwt)
-        _apply_claims_to_session(claims)
-        return True
-    except ClerkAuthError:
-        return False
-
-
-def login_required(f):
+def require_verified_user(f):
     @wraps(f)
-    def w(*a, **k):
-        if not _try_cookie_session():
+    async def w(*a, **k):
+        user = await _current_user()
+        if user is None:
             return redirect(url_for("login"))
-        return f(*a, **k)
+        _sync_display_session(user)
+        if user.get("email_verified") is False:
+            return redirect(url_for("verify_email"))
+        return await f(*a, **k)
     return w
 
 
-# ---------- auth (Clerk) ----------
+# ---------- auth (Auth0) ----------
 @app.route("/")
-def index():
-    return redirect(url_for("dashboard") if _try_cookie_session() else url_for("login"))
+async def index():
+    user = await _current_user()
+    if user:
+        _sync_display_session(user)
+        if user.get("email_verified") is False:
+            return redirect(url_for("verify_email"))
+        return redirect(url_for("dashboard"))
+    return redirect(url_for("login"))
 
 
 @app.route("/login")
-def login():
-    if _try_cookie_session():
+async def login():
+    user = await _current_user()
+    if user:
+        _sync_display_session(user)
+        if user.get("email_verified") is False:
+            return redirect(url_for("verify_email"))
         return redirect(url_for("dashboard"))
-    return render_template("login.html")
+    return render_template("login.html", auth0_ready=is_auth0_configured())
 
 
 @app.route("/signup")
-def signup():
-    if _try_cookie_session():
+async def signup():
+    user = await _current_user()
+    if user:
+        _sync_display_session(user)
+        if user.get("email_verified") is False:
+            return redirect(url_for("verify_email"))
         return redirect(url_for("dashboard"))
-    return render_template("signup.html")
+    return render_template("signup.html", auth0_ready=is_auth0_configured())
 
 
-@app.route("/auth/callback")
-def auth_callback():
-    if _try_cookie_session():
-        return redirect(url_for("dashboard"))
-    return render_template("auth_callback.html")
+@app.route("/auth/login")
+async def auth_login():
+    if not is_auth0_configured():
+        flash("Auth0 is not configured yet. Set AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_CLIENT_SECRET.", "error")
+        return redirect(url_for("login"))
+    client = get_auth0_client(url_for("callback", _external=True))
+    prompt = request.args.get("prompt")
+    opts = (
+        StartInteractiveLoginOptions(authorization_params={"prompt": prompt})
+        if prompt
+        else None
+    )
+    authorization_url = await client.start_interactive_login(options=opts) if opts else await client.start_interactive_login()
+    return redirect(authorization_url)
 
 
-@app.route("/auth/session", methods=["POST"])
-def auth_session():
-    """Verifies a Clerk RS256 session token and establishes the server session."""
-    payload = request.get_json(silent=True) or {}
-    token = (payload.get("token") or request.cookies.get("__session") or "").strip()
-    if not token:
-        return jsonify({"ok": False, "error": "Missing Clerk session token"}), 400
-    try:
-        claims = get_clerk().verify_session_token(token)
-        session.clear()
-        _apply_claims_to_session(
-            claims,
-            fallback_email=payload.get("email") or "",
-            fallback_name=payload.get("name") or "",
+@app.route("/auth/signup")
+async def auth_signup():
+    if not is_auth0_configured():
+        flash("Auth0 is not configured yet. Set AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_CLIENT_SECRET.", "error")
+        return redirect(url_for("signup"))
+    client = get_auth0_client(url_for("callback", _external=True))
+    authorization_url = await client.start_interactive_login(
+        options=StartInteractiveLoginOptions(
+            authorization_params={"screen_hint": "signup"}
         )
-        return jsonify({"ok": True, "redirect": url_for("dashboard")})
-    except ClerkAuthError as e:
-        return jsonify({"ok": False, "error": str(e)}), e.status
+    )
+    return redirect(authorization_url)
+
+
+@app.route("/callback")
+async def callback():
+    if not is_auth0_configured():
+        return redirect(url_for("login"))
+    client = get_auth0_client(url_for("callback", _external=True))
+    try:
+        await client.complete_interactive_login(str(request.url))
+        user = await client.get_user()
+        if user:
+            _sync_display_session(user)
+            if user.get("email_verified") is False:
+                return redirect(url_for("verify_email"))
+        return redirect(url_for("dashboard"))
+    except Exception as e:
+        flash(f"Authentication error: {e}", "error")
+        return redirect(url_for("login"))
+
+
+@app.route("/verify-email")
+async def verify_email():
+    user = await _current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    _sync_display_session(user)
+    if user.get("email_verified") is True:
+        return redirect(url_for("dashboard"))
+    return render_template("verify_email.html", email=user.get("email") or "")
 
 
 @app.route("/logout")
-def logout():
+async def logout():
+    if is_auth0_configured():
+        try:
+            client = get_auth0_client(url_for("callback", _external=True))
+            return_to = url_for("login", _external=True)
+            logout_url = await client.logout(options=LogoutOptions(return_to=return_to))
+            session.clear()
+            return redirect(logout_url)
+        except Exception:
+            pass
     session.clear()
-    return render_template("logout.html")
+    return redirect(url_for("login"))
 
 
 # ---------- workspace ----------
 @app.route("/app", methods=["GET", "POST"])
-@login_required
-def dashboard():
+@require_verified_user
+async def dashboard():
     result = None
     try:
         eng = get_engine()
@@ -199,8 +237,8 @@ def dashboard():
 
 
 @app.route("/export.csv")
-@login_required
-def export():
+@require_verified_user
+async def export():
     eng = get_engine()
     q = session.get("last_q")
     if not q:
