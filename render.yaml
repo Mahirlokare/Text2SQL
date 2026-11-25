@@ -11,13 +11,9 @@ services:
         value: 3.12.7
       - key: SECRET_KEY
         generateValue: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: BREVO_API_KEY
-        sync: false
-      - key: MAIL_FROM
-        sync: false
-      - key: DEMO_SHOW_LINK
-        value: "1"
-      - key: MAIL_FROM_NAME
-        value: QueryPilot AI

@@ -1,5 +1,6 @@
 {% extends "base.html" %}{% block body %}
-<div class="auth"><div class="card"><h1>Create account</h1><p class="sub">We'll email you a link to confirm it.</p>
+<div class="auth"><div class="card"><h1>Create account</h1><p class="sub">Supabase will email you a confirmation link.</p>
+{% if sb_ready is defined and not sb_ready %}<div class="flash info">Setup needed: add <b>SUPABASE_URL</b> and <b>SUPABASE_ANON_KEY</b> to your environment variables.</div>{% endif %}
 {% include "_flashes.html" %}
 <form method="post"><label>Name</label><input name="name" required autofocus>
 <label>Email</label><input type="email" name="email" required>

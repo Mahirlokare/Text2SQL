@@ -1,34 +1,35 @@
-"""QueryPilot AI web app: auth (signup/email confirm/login) + text-to-SQL workspace."""
+"""QueryPilot AI web app: Supabase Auth (signup/email confirm/login) + text-to-SQL workspace."""
 import os
 import re
 import sqlite3
 from functools import wraps
 
 from dotenv import load_dotenv
-from flask import (Flask, Response, flash, g, redirect, render_template, request,
-                   session, url_for)
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from werkzeug.security import check_password_hash, generate_password_hash
+from flask import (Flask, Response, flash, g, jsonify, redirect, render_template,
+                   request, session, url_for)
 
 from core.engine import Text2SQLEngine
 from core.llm import SQLGenerator
-from mailer import send_email
+from supabase_auth import SupabaseAuth, SupabaseAuthError
 
 load_dotenv()
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.getenv("DATA_DIR", os.path.join(BASE, "data"))
 os.makedirs(DATA, exist_ok=True)
-USERS_DB = os.path.join(DATA, "users.db")
+APP_DB = os.path.join(DATA, "users.db")
 DEMO_DB = os.path.join(BASE, "data", "shop.db")
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-only-change-me")
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
                   SESSION_COOKIE_SECURE=os.getenv("RENDER") is not None)
-ts = URLSafeTimedSerializer(app.secret_key, salt="email-confirm")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 _engine = None
+
+
+def get_auth() -> SupabaseAuth:
+    return SupabaseAuth()
 
 
 def get_engine():
@@ -38,10 +39,10 @@ def get_engine():
     return _engine
 
 
-# ---------- db ----------
+# ---------- local history db ----------
 def db():
     if "db" not in g:
-        g.db = sqlite3.connect(USERS_DB)
+        g.db = sqlite3.connect(APP_DB)
         g.db.row_factory = sqlite3.Row
     return g.db
 
@@ -54,11 +55,9 @@ def close_db(_):
 
 
 def init_db():
-    c = sqlite3.connect(USERS_DB)
+    c = sqlite3.connect(APP_DB)
     c.executescript("""
-    CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT, email TEXT UNIQUE,
-      password_hash TEXT, confirmed INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY, user_id INTEGER, question TEXT,
+    CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY, user_id TEXT, question TEXT,
       sql TEXT, ok INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     """)
     c.commit()
@@ -77,25 +76,19 @@ def login_required(f):
     return w
 
 
-def send_confirmation(email: str, name: str):
-    token = ts.dumps(email)
-    link = url_for("confirm", token=token, _external=True)
-    html = (f"<div style='font-family:sans-serif'><h2>Welcome to QueryPilot AI, {name}!</h2>"
-            f"<p>Please confirm your email to activate your account:</p>"
-            f"<p><a href='{link}' style='background:#4f46e5;color:#fff;padding:10px 18px;"
-            f"border-radius:8px;text-decoration:none'>Confirm my email</a></p>"
-            f"<p>Or open: {link}</p><p>This link expires in 24 hours.</p></div>")
-    try:
-        sent = send_email(email, "Confirm your QueryPilot AI account", html)
-    except Exception as e:  # noqa
-        app.logger.error("mail failed: %s", e)
-        sent = False
-    if not sent and (os.getenv("RENDER") is None or os.getenv("DEMO_SHOW_LINK") == "1"):
-        flash(f"DEV MODE (no mail provider configured). Confirm link: {link}", "info")
-    return sent
+def _set_user_session(user: dict, access_token: str | None = None):
+    meta = user.get("user_metadata") or {}
+    email = user.get("email") or ""
+    name = meta.get("full_name") or meta.get("name") or (email.split("@")[0] if email else "User")
+    session.clear()
+    session["uid"] = str(user.get("id"))
+    session["email"] = email
+    session["name"] = name
+    if access_token:
+        session["sb_token"] = access_token
 
 
-# ---------- auth ----------
+# ---------- auth (Supabase) ----------
 @app.route("/")
 def index():
     return redirect(url_for("dashboard") if "uid" in session else url_for("login"))
@@ -103,6 +96,7 @@ def index():
 
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
+    auth = get_auth()
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         email = request.form.get("email", "").strip().lower()
@@ -111,65 +105,126 @@ def signup():
             flash("Enter your name and a valid email.", "error")
         elif len(pw) < 8:
             flash("Password must be at least 8 characters.", "error")
-        elif db().execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
-            flash("An account with this email already exists.", "error")
         else:
-            db().execute("INSERT INTO users(name,email,password_hash) VALUES(?,?,?)",
-                         (name, email, generate_password_hash(pw)))
-            db().commit()
-            sent = send_confirmation(email, name)
-            return render_template("message.html", title="Check your inbox", email=email,
-                                   body="We sent a confirmation link. Click it to activate your account."
-                                   if sent else "Email delivery isn't configured on this server. Use the confirmation link shown above (demo mode).")
-    return render_template("signup.html")
+            try:
+                callback_url = url_for("auth_callback", _external=True)
+                res = auth.sign_up(email, pw, name, redirect_to=callback_url)
+                # Supabase returns an empty identities list when obfuscating an existing account
+                user_obj = res.get("user") if isinstance(res.get("user"), dict) else res
+                identities = user_obj.get("identities")
+                if isinstance(identities, list) and len(identities) == 0:
+                    flash("An account with this email already exists. Try signing in instead.", "error")
+                    return render_template("signup.html", sb_ready=auth.configured)
+                # If email confirmation is disabled in Supabase, an access_token is returned immediately
+                if res.get("access_token") and user_obj.get("id"):
+                    _set_user_session(user_obj, res["access_token"])
+                    flash("Account created and signed in!", "success")
+                    return redirect(url_for("dashboard"))
+                return render_template(
+                    "message.html",
+                    title="Check your inbox",
+                    email=email,
+                    body="Supabase sent a confirmation link to your email. Click it to activate your account and sign in.",
+                )
+            except SupabaseAuthError as e:
+                flash(str(e), "error")
+    return render_template("signup.html", sb_ready=auth.configured)
 
 
-@app.route("/confirm/<token>")
-def confirm(token):
-    try:
-        email = ts.loads(token, max_age=86400)
-    except SignatureExpired:
-        flash("That link expired. Request a new one.", "error")
-        return redirect(url_for("resend"))
-    except BadSignature:
-        flash("Invalid confirmation link.", "error")
+@app.route("/auth/callback")
+def auth_callback():
+    """Handles Supabase email confirmation redirects (both ?token_hash=... and #access_token=...)."""
+    auth = get_auth()
+    err_desc = request.args.get("error_description") or request.args.get("error")
+    if err_desc:
+        flash(err_desc, "error")
         return redirect(url_for("login"))
-    db().execute("UPDATE users SET confirmed=1 WHERE email=?", (email,))
-    db().commit()
-    flash("Email confirmed! You can sign in now.", "success")
-    return redirect(url_for("login"))
+
+    token_hash = request.args.get("token_hash")
+    otp_type = request.args.get("type", "signup")
+    if token_hash:
+        try:
+            res = auth.verify_otp(token_hash, otp_type)
+            user_obj = res.get("user") or {}
+            if res.get("access_token") and user_obj.get("id"):
+                _set_user_session(user_obj, res["access_token"])
+                flash("Email confirmed! Welcome to QueryPilot AI.", "success")
+                return redirect(url_for("dashboard"))
+            flash("Email confirmed! You can sign in now.", "success")
+        except SupabaseAuthError as e:
+            flash(f"Confirmation failed: {e}", "error")
+        return redirect(url_for("login"))
+
+    # Default Supabase email link puts #access_token=... in the URL fragment
+    return render_template("auth_callback.html")
+
+
+@app.route("/auth/session", methods=["POST"])
+def auth_session():
+    """Receives #access_token from auth_callback.html, verifies it with Supabase, and logs the user in."""
+    auth = get_auth()
+    payload = request.get_json(silent=True) or {}
+    access_token = (payload.get("access_token") or "").strip()
+    if not access_token:
+        return jsonify({"ok": False, "error": "Missing access token"}), 400
+    try:
+        user = auth.get_user(access_token)
+        if not user.get("id"):
+            return jsonify({"ok": False, "error": "Invalid user"}), 401
+        _set_user_session(user, access_token)
+        flash("Email confirmed! Welcome to QueryPilot AI.", "success")
+        return jsonify({"ok": True, "redirect": url_for("dashboard")})
+    except SupabaseAuthError as e:
+        return jsonify({"ok": False, "error": str(e)}), 401
 
 
 @app.route("/resend", methods=["GET", "POST"])
 def resend():
+    auth = get_auth()
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
-        u = db().execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-        if u and not u["confirmed"]:
-            send_confirmation(email, u["name"])
-        flash("If that account exists and is unconfirmed, a new link was sent.", "success")
-        return redirect(url_for("login"))
-    return render_template("resend.html")
+        if not EMAIL_RE.match(email):
+            flash("Enter a valid email address.", "error")
+        else:
+            try:
+                auth.resend_signup_confirmation(email, redirect_to=url_for("auth_callback", _external=True))
+                flash("If that account exists and is unconfirmed, Supabase sent a new confirmation link.", "success")
+                return redirect(url_for("login"))
+            except SupabaseAuthError as e:
+                flash(str(e), "error")
+    return render_template("resend.html", sb_ready=auth.configured)
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    auth = get_auth()
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
-        u = db().execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-        if not u or not check_password_hash(u["password_hash"], request.form.get("password", "")):
-            flash("Invalid email or password.", "error")
-        elif not u["confirmed"]:
-            flash("Please confirm your email first. Check your inbox or resend the link.", "error")
-        else:
-            session.clear()
-            session["uid"], session["name"] = u["id"], u["name"]
-            return redirect(url_for("dashboard"))
-    return render_template("login.html")
+        pw = request.form.get("password", "")
+        try:
+            res = auth.sign_in(email, pw)
+            user = res.get("user") or {}
+            if not user.get("id"):
+                flash("Invalid email or password.", "error")
+            else:
+                _set_user_session(user, res.get("access_token"))
+                return redirect(url_for("dashboard"))
+        except SupabaseAuthError as e:
+            msg = str(e)
+            if "email not confirmed" in msg.lower():
+                flash("Please confirm your email first. Check your inbox or click 'Resend confirmation'.", "error")
+            elif e.status in (400, 401):
+                flash("Invalid email or password.", "error")
+            else:
+                flash(msg, "error")
+    return render_template("login.html", sb_ready=auth.configured)
 
 
 @app.route("/logout")
 def logout():
+    tok = session.get("sb_token")
+    if tok:
+        get_auth().sign_out(tok)
     session.clear()
     return redirect(url_for("login"))
 
