@@ -203,6 +203,31 @@ def login_required(f):
     return w
 
 
+def _try_webhook_email(to_email: str, subject: str, html: str) -> bool:
+    """Sends email over HTTPS via the user's own free Google Apps Script Web App (works on Render free tier)."""
+    import json
+    import urllib.request
+
+    url = (os.getenv("MAIL_WEBHOOK_URL") or "").strip()
+    if not url:
+        return False
+    secret = (os.getenv("MAIL_WEBHOOK_SECRET") or "").strip()
+    payload = json.dumps({
+        "secret": secret,
+        "to": to_email,
+        "subject": subject,
+        "html": html,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json", "User-Agent": "QueryPilotAI/2.1"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return 200 <= resp.status < 400
+
+
 def _try_smtp_email(to_email: str, subject: str, html: str) -> bool:
     host = (os.getenv("SMTP_HOST") or "").strip()
     sender = (os.getenv("SMTP_USER") or os.getenv("MAIL_FROM") or "").strip()
@@ -235,9 +260,11 @@ def issue_confirmation(user_id: int, email: str, name: str) -> tuple[bool, str]:
         f"<p>This single-use link expires in 24 hours.</p></div>"
     )
     try:
-        sent = _try_smtp_email(email, "Confirm your QueryPilot AI account", html)
+        sent = _try_webhook_email(email, "Confirm your QueryPilot AI account", html) or _try_smtp_email(
+            email, "Confirm your QueryPilot AI account", html
+        )
     except Exception as e:
-        app.logger.warning("SMTP delivery skipped/failed: %s", e)
+        app.logger.warning("Email delivery skipped/failed: %s", e)
         sent = False
     return sent, link
 
