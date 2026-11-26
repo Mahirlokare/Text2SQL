@@ -2,7 +2,7 @@
 <div class="wrap">{% include "_flashes.html" %}
   <div class="card">
     <h2>Universal Text-to-SQL Agent</h2>
-    <p class="sub">Ask any query for any domain or dataset in the world. Paste an optional schema or let the agent infer clean table &amp; column names automatically.</p>
+    <p class="sub">No database connection, no CSV upload, and no schema setup required — just type any question in plain English and get ready-to-run SQL for any domain in the world.</p>
 
     <form method="post">
       <div class="controls-row">
@@ -15,18 +15,13 @@
           </select>
         </div>
         <div class="prompt-box">
-          <label for="q">Natural-Language Prompt</label>
+          <label for="q">Ask any SQL question</label>
           <div class="row">
-            <input name="question" id="q" placeholder="e.g. Find the top 5 doctors with the highest patient recovery rate in 2025" required maxlength="2000" autofocus>
+            <input name="question" id="q" placeholder="e.g. Find the top 5 cardiologists by patient recovery rate in 2025" required maxlength="2000" autofocus>
             <button type="submit">Generate SQL</button>
           </div>
         </div>
       </div>
-
-      <details class="schema-details" {% if schema_hint %}open{% endif %}>
-        <summary>Optional: Paste custom table schema / columns (leave blank to auto-infer any domain)</summary>
-        <textarea name="schema_hint" rows="4" placeholder="Optional — e.g.&#10;patients(id, full_name, dob, blood_group)&#10;admissions(id, patient_id, doctor_id, admitted_at, discharged_at, outcome)">{{ schema_hint }}</textarea>
-      </details>
     </form>
 
     <div class="chips">
@@ -71,7 +66,7 @@
           <div class="explain-box"><b>How it works:</b> {{ result.explanation }}</div>
         {% endif %}
         {% if result.assumed_schema %}
-          <div class="meta" style="margin-top:8px"><b>Tables / Schema used:</b> <code>{{ result.assumed_schema }}</code></div>
+          <div class="meta" style="margin-top:8px"><b>Inferred Tables &amp; Columns:</b> <code>{{ result.assumed_schema }}</code></div>
         {% endif %}
       {% endif %}
     </div>

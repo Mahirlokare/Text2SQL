@@ -277,10 +277,12 @@ class FreeOpenLLMClient:
     """Zero-key, $0 open-access LLM client via Pollinations OpenAI-compatible endpoint."""
     ENDPOINT = "https://text.pollinations.ai/openai"
 
-    def chat(self, system: str, user_prompt: str, timeout: int = 22) -> str:
+    def chat(self, system: str, user_prompt: str, timeout: int = 25) -> str:
+        import random
         body = {
             "model": "openai-fast",
             "temperature": 0,
+            "seed": random.randint(1, 999999),
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
@@ -288,14 +290,14 @@ class FreeOpenLLMClient:
         }
         data = json.dumps(body).encode("utf-8")
         last_err = None
-        for attempt in range(3):
+        for attempt in range(4):
             req = urllib.request.Request(
                 self.ENDPOINT,
                 data=data,
                 headers={
                     "Content-Type": "application/json",
                     "Accept": "application/json",
-                    "User-Agent": "QueryPilotAI/2.0",
+                    "User-Agent": "QueryPilotAI/2.1",
                 },
                 method="POST",
             )
@@ -310,12 +312,15 @@ class FreeOpenLLMClient:
                 raise RuntimeError("Empty response from free LLM endpoint")
             except urllib.error.HTTPError as e:
                 last_err = e
-                if e.code == 429 and attempt < 2:
-                    time.sleep(3.5 * (attempt + 1))
+                if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                    time.sleep(2.5 * (attempt + 1))
                     continue
                 raise
             except Exception as e:
                 last_err = e
+                if attempt < 2:
+                    time.sleep(2.0)
+                    continue
                 break
         raise RuntimeError(f"Free LLM call failed: {last_err}")
 
