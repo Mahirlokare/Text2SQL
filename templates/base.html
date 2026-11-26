@@ -1,8 +1,14 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>QueryPilot AI</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<title>QueryPilot AI</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script defer src="{{ url_for('static', filename='app.js') }}"></script>
 </head><body>
 <div class="nav"><div class="logo">Query<span>Pilot</span> AI</div>
-<div class="nav-right">{% if session.uid %}<span>Hi, {{ session.name }}</span><a href="{{ url_for('logout') }}">Sign out</a>{% endif %}</div></div>
+<div class="nav-right">{% if session.uid %}<span>Hi, {{ session.name }}</span>
+<form method="post" action="{{ url_for('logout') }}" class="inline-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button type="submit" class="link-btn">Sign out</button>
+</form>{% endif %}</div></div>
 {% block body %}{% endblock %}
 </body></html>

@@ -11,3 +11,5 @@ services:
         value: 3.12.7
       - key: SECRET_KEY
         generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true

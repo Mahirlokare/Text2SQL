@@ -5,6 +5,7 @@
     <p class="sub">No database connection, no CSV upload, and no schema setup required — just type any question in plain English and get ready-to-run SQL for any domain in the world.</p>
 
     <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="controls-row">
         <div class="dialect-box">
           <label for="dialect">SQL Dialect</label>
@@ -25,17 +26,17 @@
     </form>
 
     <div class="chips">
-      {% for e in [
-        "Hospital: Top 5 cardiologists by patient recovery rate in 2025",
-        "Banking: Detect accounts with more than 3 transactions over $10,000 within 24 hours",
-        "Aviation: Routes with the highest average arrival delay over the past 90 days",
-        "SaaS: Monthly recurring revenue (MRR) and churn rate by subscription tier",
-        "University: Students whose GPA is above their department average",
-        "HR Payroll: Top 3 highest-paid employees in each department using window functions",
-        "Social Media: Creators with >10k followers whose engagement rate grew month-over-month",
-        "Schema Design: Create PostgreSQL tables for a ride-sharing app like Uber"
+      {% for label, prompt in [
+        ("Hospital: Top 5 cardiologists by recovery rate", "Top 5 cardiologists by patient recovery rate in 2025"),
+        ("Banking: Detect high-value fraud bursts", "Detect accounts with more than 3 transactions over $10,000 within 24 hours"),
+        ("Aviation: Highest average flight delays", "Routes with the highest average arrival delay over the past 90 days"),
+        ("SaaS: Monthly MRR & churn by tier", "Monthly recurring revenue (MRR) and churn rate by subscription tier"),
+        ("University: Students above dept GPA avg", "Students whose GPA is above their department average"),
+        ("HR: Top 3 salaries per dept (window fn)", "Top 3 highest-paid employees in each department using window functions"),
+        ("Social: Growing creators (>10k followers)", "Creators with >10k followers whose engagement rate grew month-over-month"),
+        ("Schema Design: Ride-sharing tables", "Create PostgreSQL tables for a ride-sharing app like Uber")
       ] %}
-        <button type="button" class="chip" onclick="document.getElementById('q').value=this.textContent.replace(/^[A-Za-z ]+:\s*/, '');document.getElementById('q').focus()">{{ e }}</button>
+        <button type="button" class="chip" data-prompt="{{ prompt }}">{{ label }}</button>
       {% endfor %}
     </div>
   </div>
@@ -50,13 +51,13 @@
         </div>
         {% if result.sql %}
           <div class="res-actions">
-            <button type="button" class="btn alt sm" id="copyBtn" onclick="copySQL()">Copy SQL</button>
+            <button type="button" class="btn alt sm" id="copyBtn">Copy SQL</button>
             <a class="btn alt sm" href="{{ url_for('download_sql') }}">Download .sql</a>
           </div>
         {% endif %}
       </div>
 
-      <p style="margin:10px 0 8px"><b>{{ result.q }}</b></p>
+      <p class="res-q"><b>{{ result.q }}</b></p>
 
       {% if result.err %}
         <div class="flash error">{{ result.err }}</div>
@@ -66,7 +67,7 @@
           <div class="explain-box"><b>How it works:</b> {{ result.explanation }}</div>
         {% endif %}
         {% if result.assumed_schema %}
-          <div class="meta" style="margin-top:8px"><b>Inferred Tables &amp; Columns:</b> <code>{{ result.assumed_schema }}</code></div>
+          <div class="meta mt-8"><b>Inferred Tables &amp; Columns:</b> <code>{{ result.assumed_schema }}</code></div>
         {% endif %}
       {% endif %}
     </div>
@@ -91,16 +92,4 @@
     {% endif %}
   </div>
 </div>
-
-<script>
-function copySQL() {
-  const el = document.getElementById("sqlOut");
-  const btn = document.getElementById("copyBtn");
-  if (!el) return;
-  navigator.clipboard.writeText(el.textContent).then(function () {
-    btn.textContent = "Copied!";
-    setTimeout(function () { btn.textContent = "Copy SQL"; }, 1800);
-  });
-}
-</script>
 {% endblock %}

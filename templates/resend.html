@@ -2,12 +2,13 @@
 <div class="auth">
   <div class="card">
     <h1>Resend confirmation</h1>
-    <p class="sub">Enter your email to generate a fresh confirmation link.</p>
+    <p class="sub">Enter your email to generate a fresh single-use confirmation link.</p>
     {% include "_flashes.html" %}
     <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label for="email">Email</label>
-      <input id="email" type="email" name="email" required autofocus>
-      <button class="full">Get confirmation link</button>
+      <input id="email" type="email" name="email" autocomplete="email" required autofocus>
+      <button class="full" type="submit">Get confirmation link</button>
     </form>
   </div>
   <div class="foot"><a href="{{ url_for('login') }}">Back to sign in</a></div>

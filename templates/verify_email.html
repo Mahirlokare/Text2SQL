@@ -1,16 +1,16 @@
 {% extends "base.html" %}{% block body %}
 <div class="auth">
-  <div class="card" style="text-align:center">
+  <div class="card center">
     {% if sent %}
       <h1>Check your inbox</h1>
-      <p class="sub">We sent a confirmation email to <b>{{ email }}</b>. Click the link inside to activate your account.</p>
+      <p class="sub">We sent a single-use confirmation link to <b>{{ email }}</b>. Click it to activate your account.</p>
     {% else %}
       <h1>Confirm your account</h1>
       <p class="sub">Hi <b>{{ name }}</b> ({{ email }}) — click below to confirm your email and activate your account:</p>
-      <a class="btn full" href="{{ confirm_link }}" style="text-align:center;text-decoration:none;color:#fff;margin-bottom:14px">Confirm my email &amp; activate account</a>
-      <p class="meta">Built-in confirmation mode (no external mail service required).</p>
+      <a class="btn full" href="{{ confirm_link }}">Confirm my email &amp; activate account</a>
+      <p class="meta mt-8">Single-use cryptographic confirmation token (no external mail service required).</p>
     {% endif %}
-    <div style="margin-top:12px"><a class="btn alt" href="{{ url_for('login') }}">Back to sign in</a></div>
+    <div class="mt-12"><a class="btn alt" href="{{ url_for('login') }}">Back to sign in</a></div>
   </div>
 </div>
 {% endblock %}
