@@ -4,7 +4,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <script defer src="{{ url_for('static', filename='app.js') }}"></script>
 </head><body>
-<div class="nav"><div class="logo">Query<span>Pilot</span> AI</div>
+<div class="nav"><a class="logo" href="{{ url_for('index') }}">Query<span>Pilot</span> AI</a>
 <div class="nav-right">{% if session.uid %}<span>Hi, {{ session.name }}</span>
 <form method="post" action="{{ url_for('logout') }}" class="inline-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
